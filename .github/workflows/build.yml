@@ -1,0 +1,80 @@
+name: Build
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The disk tool (pure standard-library Python) builds the SASI image.
+      - uses: actions/checkout@v4
+        with:
+          repository: ifilot/p2000c-cpm-disk-tool
+          path: disktool
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Pull the Z88DK toolchain image
+        run: docker pull z88dk/z88dk
+
+      - name: Build MINES.COM
+        run: make build
+
+      - name: Build the SASI deployment image
+        run: make deploy DISKTOOL=disktool
+
+      - name: Package
+        run: |
+          mkdir -p release
+          cp build/MINES.COM build/HD1_256.hda LICENSE README.md release/
+          cd release && zip -9 ../p2000c-minesweeper.zip MINES.COM HD1_256.hda LICENSE README.md
+          sha256sum ../p2000c-minesweeper.zip MINES.COM HD1_256.hda
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2000c-minesweeper
+          path: |
+            p2000c-minesweeper.zip
+            build/MINES.COM
+            build/HD1_256.hda
+          retention-days: 90
+
+  release:
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download build
+        uses: actions/download-artifact@v4
+        with:
+          name: p2000c-minesweeper
+          path: dist
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/p2000c-minesweeper.zip dist/build/MINES.COM dist/build/HD1_256.hda \
+            --title "Mijnenveger $GITHUB_REF_NAME" --generate-notes

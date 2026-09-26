@@ -1,0 +1,6 @@
+# Build products (Z88DK output, disposable disk images, screenshots)
+build/
+
+# Python
+__pycache__/
+*.pyc
