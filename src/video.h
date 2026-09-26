@@ -31,8 +31,12 @@ extern unsigned char conin(void);
 extern unsigned char conready(void);          /* key waiting? (BIOS CONST) */
 extern void con_puts(const char *s) __z88dk_fastcall;
 extern void con_at(unsigned int row_col) __z88dk_fastcall;
+extern void con_write(const unsigned char *p, unsigned int n);   /* n raw bytes */
 
 extern void mem_xor(unsigned char *dst, const unsigned char *src, unsigned int n);   /* dst ^= src */
+extern unsigned int runs_cost(const unsigned char *buf, unsigned int width);        /* link bytes, see video.asm */
+/* dst = a ^ b over n (1..255) bytes; returns runs_cost(dst, n). */
+extern unsigned int xor_cost(unsigned char *dst, const unsigned char *a, const unsigned char *b, unsigned int n);
 extern unsigned char entropy(void);           /* Z80 refresh register */
 extern unsigned char bdos(unsigned int de, unsigned int c);   /* BDOS function c */
 

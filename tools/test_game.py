@@ -12,6 +12,8 @@ run with the same keys meets the same field. It checks:
   names the cursor's field;
 - flags: F cycles flag -> question mark -> nothing, and the mines counter
   follows;
+- repeated keys: a key sent twice at once (as a terminal auto-repeat does
+  while it is busy) moves the cursor once; after a pause it moves again;
 - chording: RETURN on an open number with its mines flagged opens the rest;
 - a whole game: every safe cell opened with G + coordinate, then
   "Gewonnen!", every mine flagged, the counter at 0, and the best time on
@@ -19,8 +21,8 @@ run with the same keys meets the same field. It checks:
 - a lost game: opening a mine gives "Verloren!";
 - the picture: after a chord, at the win, after the help page and at the
   loss, the terminal's graphics RAM equals the program's framebuffer dot
-  for dot (vector lattice, erase strokes and row uploads together) -- and
-  the same for a fresh board and a first open in the other tile style.
+  for dot (grid lines, chunks and row uploads together) -- and
+  the same for a fresh board and a first open in the other tile styles.
 
 Run after `make build`.
 """
@@ -93,6 +95,19 @@ def check_navigation(level, cells, errors):
         errors.append(f"third F left {after[closed]:02X}")
 
 
+def check_repeats(level, errors):
+    """A doubled key moves once; the same key after a pause moves again."""
+    cols, rows, _ = LEVELS[level]
+    r, c = rows // 2, cols // 2
+    actions = start(level) + ["--send", "dd", "--run", "6000000"]
+    state, _, _ = run(actions)
+    if veld(level, r * cols + c + 1) not in screen_text(state):
+        errors.append("a doubled key did not move the cursor exactly once")
+    state, _, _ = run(actions + ["--send", "d", "--wait-for", veld(level, r * cols + c + 2)])
+    if state["status"] != "ok":
+        errors.append("the same key after a pause was dropped")
+
+
 def chord_actions(level, cells):
     """Flags the mines around an open number that also borders a closed safe
     cell, then presses RETURN on the number. Returns (actions, cells opened)."""
@@ -130,6 +145,7 @@ def run_level(level):
     cells = layout(level)
     check_layout(level, cells, errors)
     check_navigation(level, cells, errors)
+    check_repeats(level, errors)
 
     # chord, then open everything else
     chord, safe = chord_actions(level, cells)
@@ -175,8 +191,9 @@ def run_level(level):
     same_picture("after the help page", base + sum(steps[:len(steps) // 2], [])
                  + ["--send", "h", "--wait-for", "SPELREGELS", "--send", " ", "--wait-for", PLAYING], errors)
     same_picture("at the loss", lose, errors)
-    same_picture("strepen, fresh board", start(level, 1), errors)
-    same_picture("strepen, first open", first_open(level, 1), errors)
+    for style, name in ((1, "vierkanten"), (2, "strepen")):
+        same_picture(f"{name}, fresh board", start(level, style), errors)
+        same_picture(f"{name}, first open", first_open(level, style), errors)
 
     print(f"level {level + 1} ({cols}x{rows}, {mines} mines): {len(steps)} opens after the first "
           f"and the chord, {'ok' if not errors else 'FAILED'}")

@@ -1,13 +1,13 @@
 # Mijnenveger (Minesweeper) for the Philips P2000C
 
 [![Build](https://github.com/ifilot/p2000c-minesweeper/actions/workflows/build.yml/badge.svg)](https://github.com/ifilot/p2000c-minesweeper/actions/workflows/build.yml)
-[![Version](https://img.shields.io/badge/version-1.0.0-blue)](https://github.com/ifilot/p2000c-minesweeper/releases)
+[![Version](https://img.shields.io/badge/version-1.0.1-blue)](https://github.com/ifilot/p2000c-minesweeper/releases)
 [![License: GPL v3](https://img.shields.io/badge/license-GPLv3-blue.svg)](LICENSE)
 
 Mijnenveger, the classic game of Minesweeper, for the Philips P2000C running
 CP/M. The minefield is drawn in the terminal board's 512x252
-high-resolution graphics mode: closed cells as three concentric squares
-(or, switchable, raised scanline-hatched buttons), flags, question marks,
+high-resolution graphics mode: closed cells as a dithered raster
+(or, switchable, concentric squares or horizontal stripes), flags, question marks,
 sea mines, and the one that went off. The text plane
 carries the panel. The user interface is in Dutch. The three classic
 levels are offered at the start, each with the largest square cells that
@@ -33,7 +33,8 @@ fit the screen.
   <img src="docs/won.png" alt="A won game" width="48%">
 </p>
 <p align="center">
-  <img src="docs/strepen.png" alt="Gevorderd with the hatched tile style" width="48%">
+  <img src="docs/vierkanten.png" alt="Gevorderd with the concentric-squares tile style" width="48%">
+  <img src="docs/strepen.png" alt="Gevorderd with the striped tile style" width="48%">
 </p>
 
 ## Play
@@ -46,8 +47,8 @@ standard split layout with the game on F:. Copy it to the SD card in place
 of the distribution's `HD1_256.hda` and run `F:MINES`. The program opens
 on the start screen, which is plain text and appears instantly. It shows
 the best time per level; `1`, `2` or `3` starts a game, and `T` switches
-the closed tiles between *vierkanten* (three concentric squares, the
-default) and *strepen* (raised buttons with a hatched face). The choice
+the closed tiles between *raster* (a checkerboard dither, the default),
+*vierkanten* (three concentric squares) and *strepen* (horizontal stripes). The choice
 is remembered.
 
 | Level | Board | Mines | Cell (dots) |
@@ -75,7 +76,7 @@ numbered, so a cell has a name such as `C12` (row C, column 12).
 | `N` | New game at the same level |
 | `ESC` | Back to the start screen (another level) |
 | `Q` | Quit, after confirmation (immediate on the start screen) |
-| `T` (start screen) | Closed tiles: concentric squares or hatched buttons |
+| `T` (start screen) | Closed tiles: dither, concentric squares or stripes |
 
 Giving up a game in progress with `N` or `ESC` asks for a confirmation.
 The panel shows the mines left (mines minus flags), the game clock and
@@ -83,7 +84,9 @@ the name of the cursor's cell. A lost game reveals every mine, crosses out
 the flags that were wrong and shows the mine that went off in inverse
 video. A won game flags all mines; a new best time is stored in
 `MINES.DAT` on the current drive, together with the tile style. After five minutes without a keypress a
-screen saver blanks the picture; any key brings it back.
+screen saver blanks the picture; any key brings it back. A key that
+repeats the previous one while the board is still being drawn, or within
+0.15 s after, is ignored, so a single press never acts twice.
 
 ## Build
 
@@ -114,7 +117,7 @@ emulator is deterministic, so a second run meets the same field) and then
 plays: it checks the layout and the flood rule, cursor keys, `TAB`, the
 flag cycle and the mines counter, a chord, a whole won game opened cell by
 cell with `G`, the best time on the start screen, and a lost game. At six
-moments, in both tile styles, it also compares the terminal's graphics RAM
+moments, and in all three tile styles, it also compares the terminal's graphics RAM
 with the program's framebuffer dot for dot.
 
 ## Layout
@@ -124,14 +127,14 @@ with the program's framebuffer dot for dot.
 | `src/main.c` | Program flow: start screen, games |
 | `src/game.c`, `src/game.h` | Game state, keys (cursor, `G` jump, `TAB`), opening, chording, flags, end of a game |
 | `src/field.c`, `src/field.h` | The minefield: mine placement after the first cell, flood opening, chording, flag cycle |
-| `src/screen.c`, `src/screen.h` | Board picture: geometry per level, tiles, vector lattice, uploads of what changed |
+| `src/screen.c`, `src/screen.h` | Board picture: geometry per level, tiles, the grid as lines, chunked uploads of what changed |
 | `src/panel.c`, `src/panel.h` | Panel on the text plane: beside the board, or above and below it for Expert |
 | `src/screens.c`, `src/screens.h` | Start and help screens (text mode) |
 | `src/scores.c`, `src/scores.h` | Best times and the tile style in `MINES.DAT` (BDOS file calls) |
 | `src/clock.c`, `src/clock.h` | Game clock (h:mm:ss) from the BIOS's documented 60 Hz system timer |
 | `src/saver.c`, `src/saver.h` | Screen saver: after five idle minutes the picture is blanked and a dim caption wanders the text screen |
-| `src/video.asm`, `src/video.h` | Framebuffer primitives, `ESC r` row uploads, BIOS console I/O, BDOS call |
-| `src/sprites.h` | Generated tiles (two closed-tile styles), their line operations, cursor, labels |
+| `src/video.asm`, `src/video.h` | Framebuffer primitives, `ESC r` uploads, change and cost scans, BIOS console I/O, BDOS call |
+| `src/sprites.h` | Generated tiles (three closed-tile styles), cursor, labels |
 | `tools/` | Tile generator, emulator launcher, screenshots, tests, benchmark |
 
 ## License

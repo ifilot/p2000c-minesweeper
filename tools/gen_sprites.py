@@ -8,17 +8,20 @@ fits the screen: 40x24 dots (beginner, 9x9), 24x14 (intermediate, 16x16)
 and 16x10 (expert, 30x16).
 
 Every cell is one whole tile, byte aligned, row-major, MSB = leftmost dot.
-Closed tiles come in two styles, chosen on the start screen:
+Every tile carries the board's grid on its top row and left column, so the
+grid is continuous; the terminal draws it as long lines, and everything
+else goes as bitmap uploads (the terminal board draws lines dot by dot,
+which is slow, while an upload only costs its bytes). Closed tiles come in
+three styles, chosen on the start screen:
 
-  0 vierkanten  three concentric squares
-  1 strepen     a raised button with a scanline-hatched face
+  0 raster      a 50% checkerboard dither filling the grid cell
+  1 vierkanten  the grid cell with two squares inside: three concentric squares
+  2 strepen     horizontal stripes inside the grid cell
 
-Either closed tile is the result of an ordered list of full-length line
-operations -- set or erase one row, or one column, of every tile on the
-board. The terminal applies its line commands (ESC M draws, ESC v erases)
-in order, the last one on a dot winning, so a fresh board goes to it as
-those long lines instead of uploads. The generator derives the lists and
-checks that each reproduces its closed tile exactly.
+Under the cursor a dithered cell loses its dither in a thin ring inside the
+cursor frame, so the frame stands out.
+
+Flags and question marks stand on a bare cell; open cells never show them.
 
 Labels reuse the terminal's own 8x12 character-ROM glyphs (font sheet from
 the sibling p2000c-emulator checkout); the expert board's 30 column numbers
@@ -37,29 +40,21 @@ FONT_SHEET = ROOT.parent / "p2000c-emulator/assets/font/P2000C font mini.png"
 # name, columns, rows, cell width (dots), cell height (lines)
 LEVELS = [("beginner", 9, 9, 40, 24), ("gevorderd", 16, 16, 24, 14), ("expert", 30, 16, 16, 10)]
 
-STYLES = ["vierkanten", "strepen"]
+STYLES = ["raster", "vierkanten", "strepen"]
 
-# Strepen, in four passes (the order the lines are sent in): set rows, erase
-# gap columns, set columns, erase gap rows. Each button has a scanline-
-# hatched face, a thin top/left highlight, a heavy bottom/right shadow and a
-# dark gap around it.
-LATTICE = {
-    40: dict(set_rows=[1, 4, 7, 10, 13, 16, 19, 21, 22], gap_cols=[38, 39],
-             set_cols=[1, 35, 36, 37], gap_rows=[0, 23]),
-    24: dict(set_rows=[1, 3, 5, 7, 9, 11, 12], gap_cols=[23],
-             set_cols=[1, 20, 21, 22], gap_rows=[0]),
-    16: dict(set_rows=[1, 3, 5, 7, 8], gap_cols=[15],
-             set_cols=[1, 13, 14], gap_rows=[0, 9]),
+# Vierkanten: the squares inside the grid cell, (x0, y0, x1, y1) inclusive,
+# square on the tube (dots are 3:5): about 70% and 40% of the cell.
+SQUARES = {
+    40: [(6, 4, 33, 19), (12, 7, 27, 16)],
+    24: [(4, 3, 19, 11), (8, 5, 15, 9)],
+    16: [(3, 2, 12, 8), (6, 4, 9, 6)],
 }
 
-# Vierkanten: the squares from the outside in, (x0, y0, x1, y1) inclusive.
-# Spacing is a dark line between squares vertically and two or three dark
-# dots horizontally, which look alike on the tube (dots are 3:5). The
-# expert's innermost square is a 4x1 dash: ten lines hold no more.
-RINGS = {
-    40: [(1, 1, 38, 22), (4, 3, 35, 20), (7, 5, 32, 18)],
-    24: [(1, 1, 22, 12), (4, 3, 19, 10), (7, 5, 16, 8)],
-    16: [(1, 0, 14, 8), (3, 2, 12, 6), (6, 4, 9, 4)],
+# Strepen: the stripe rows and their horizontal extent.
+STRIPES = {
+    40: ([4, 7, 10, 13, 16, 19], 5, 34),
+    24: ([3, 5, 7, 9, 11], 4, 19),
+    16: ([2, 4, 6, 8], 4, 11),
 }
 
 # The first STYLE_TILES tiles differ per style.
@@ -156,107 +151,52 @@ def narrow(ch):
 
 # --- tiles -------------------------------------------------------------------------
 
-def lattice_ops(w):
-    """Strepen: (kind, value, offset) in sending order."""
-    lat = LATTICE[w]
-    return ([("row", 1, y) for y in lat["set_rows"]] + [("col", 0, x) for x in lat["gap_cols"]]
-            + [("col", 1, x) for x in lat["set_cols"]] + [("row", 0, y) for y in lat["gap_rows"]])
-
-
-def ring_ops(w, h):
-    """Vierkanten: the operations by priority, highest first, then reversed
-    into sending order. Gaps around the outer square win over everything;
-    each square's edge rows, then its side columns, win over the rows and
-    columns erased between it and the next square inside, which in turn
-    win over everything of the inner squares."""
-    rings = RINGS[w]
-    x0, y0, x1, y1 = rings[0]
-    prio = [("row", 0, y) for y in range(h) if not y0 <= y <= y1]
-    prio += [("col", 0, x) for x in range(w) if not x0 <= x <= x1]
-    for i, (ax, ay, bx, by) in enumerate(rings):
-        prio += [("row", 1, ay), ("row", 1, by)] if ay != by else [("row", 1, ay)]
-        prio += [("col", 1, ax), ("col", 1, bx)]
-        if i + 1 < len(rings):
-            nax, nay, nbx, nby = rings[i + 1]
-            prio += [("row", 0, y) for y in list(range(ay + 1, nay)) + list(range(nby + 1, by))]
-            prio += [("col", 0, x) for x in list(range(ax + 1, nax)) + list(range(nbx + 1, bx))]
-    return prio[::-1]
-
-
-def prune(ops, w, h):
-    """Drops every operation that the tile does not need (an erase of dots
-    nothing set before it, a set that later operations cover anyway)."""
-    want = apply_ops(ops, w, h).px
-    k = 0
-    while k < len(ops):
-        trial = ops[:k] + ops[k + 1:]
-        if apply_ops(trial, w, h).px == want:
-            ops = trial
-        else:
-            k += 1
-    return ops
-
-
-def style_ops(style, w, h):
-    return prune(ring_ops(w, h) if STYLES[style] == "vierkanten" else lattice_ops(w), w, h)
-
-
-def apply_ops(ops, w, h):
+def grid_tile(w, h):
+    """The cell's share of the grid: its top row and left column."""
     t = Bitmap(w, h)
-    for kind, value, k in ops:
-        if kind == "row":
-            t.rect(0, k, w - 1, k, value)
-        else:
-            t.rect(k, 0, k, h - 1, value)
+    t.rect(0, 0, w - 1, 0)
+    t.rect(0, 0, 0, h - 1)
     return t
 
 
 def closed_tile(style, w, h):
-    t = apply_ops(style_ops(style, w, h), w, h)
-    if STYLES[style] == "vierkanten":            # the list must draw exactly the squares
-        want = Bitmap(w, h)
-        for x0, y0, x1, y1 in RINGS[w]:
-            want.rect(x0, y0, x1, y0)
-            want.rect(x0, y1, x1, y1)
-            want.rect(x0, y0, x0, y1)
-            want.rect(x1, y0, x1, y1)
-        assert t.px == want.px, f"ring operations for {w}x{h}"
+    t = grid_tile(w, h)
+    if STYLES[style] == "raster":
+        for y in range(1, h):
+            for x in range(1, w):
+                if (x + y) % 2 == 0:              # tiles are even-sized: the dither runs on across cells
+                    t.set(x, y)
+    elif STYLES[style] == "vierkanten":
+        for x0, y0, x1, y1 in SQUARES[w]:
+            t.rect(x0, y0, x1, y0)
+            t.rect(x0, y1, x1, y1)
+            t.rect(x0, y0, x0, y1)
+            t.rect(x1, y0, x1, y1)
+    else:
+        rows, x0, x1 = STRIPES[w]
+        for y in rows:
+            t.rect(x0, y, x1, y)
     return t
 
 
-def face(style, w, h):
-    """Where the symbols go on a closed tile: inside the outer square, or
-    the hatched face of the button."""
-    if STYLES[style] == "vierkanten":
-        x0, y0, x1, y1 = RINGS[w][0]
-        return x0 + 1, y0 + 1, x1 - 1, y1 - 1
-    return interior(w, h)
-
-
-def inset_tile(style, w, h):
-    """A closed tile with a dark face: under the cursor, and for the flag
-    and the question mark."""
+def selected_tile(style, w, h):
+    """The closed tile under the cursor (the cursor is OR-ed on in the
+    program). A dither keeps clear of the cursor by one dot or line, so the
+    frame stands out; the other styles stay as they are."""
     t = closed_tile(style, w, h)
-    x0, y0, x1, y1 = face(style, w, h)
-    t.rect(x0, y0, x1, y1, 0)
+    if STYLES[style] != "raster":
+        return t
+    cur = cursor_overlay(w, h)
+    for y in range(1, h):
+        for x in range(1, w):
+            if any(cur.get(x + dx, y + dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1)):
+                t.set(x, y, 0)
     return t
-
-
-def interior(w, h):
-    """The hatched button's face: inside the highlight and the shadow."""
-    lat = LATTICE[w]
-    shadow_rows = [y for y in lat["set_rows"] if y + 1 in lat["set_rows"] or y - 1 in lat["set_rows"]]
-    return lat["set_cols"][0] + 1, lat["set_rows"][0] + 1, lat["set_cols"][1] - 1, min(shadow_rows) - 1
 
 
 def open_tile(w, h):
-    """Flat: a dotted grid line along the top and left edge, dark inside."""
-    t = Bitmap(w, h)
-    for x in range(0, w, 2):
-        t.set(x, 0)
-    for y in range(0, h, 2):
-        t.set(0, y)
-    return t
+    """Flat: just the grid, dark inside."""
+    return grid_tile(w, h)
 
 
 def centre(t, pattern, w, h, dx=0, dy=0, v=1, box=None):
@@ -348,7 +288,7 @@ def flag(w, h):
 
 def small_symbol(rows):
     t = Bitmap(16, 10)
-    t.paste([[int(c == "#") for c in row] for row in rows], 2, 2)
+    t.paste([[int(c == "#") for c in row] for row in rows], 3, 3)
     return t
 
 
@@ -360,8 +300,8 @@ def or_into(t, other):
 
 
 def cross(t, w, h):
-    """Diagonal cross over the tile face (a flag that was wrong)."""
-    x0, y0, x1, y1 = interior(w, h)
+    """Diagonal cross over the cell (a flag that was wrong)."""
+    x0, y0, x1, y1 = 3, 2, w - 4, h - 2
     n = max(x1 - x0, 1)
     thick = 3 if w == 40 else 2
     for i in range(n + 1):
@@ -374,15 +314,15 @@ def cross(t, w, h):
 def make_tiles(sheet, style, w, h):
     tiles = {}
     tiles["closed"] = closed_tile(style, w, h)
-    tiles["selected"] = inset_tile(style, w, h)
-    t = inset_tile(style, w, h)
+    tiles["selected"] = selected_tile(style, w, h)
+    t = grid_tile(w, h)
     or_into(t, small_symbol(SMALL_FLAG) if w == 16 else flag(w, h))
     tiles["flag"] = t
-    t = inset_tile(style, w, h)
+    t = grid_tile(w, h)
     if w == 16:
         or_into(t, small_symbol(SMALL_QUESTION))
     else:
-        centre(t, digit_pattern(sheet, w, "?"), w, h, box=face(style, w, h))
+        centre(t, digit_pattern(sheet, w, "?"), w, h)
     tiles["question"] = t
     for n in range(9):
         t = open_tile(w, h)
@@ -396,6 +336,8 @@ def make_tiles(sheet, style, w, h):
     t.rect(1, 1, w - 1, h - 1)
     centre(t, mine(w, h), w, h, v=0)
     tiles["boom"] = t
+    for name, tile in tiles.items():            # every tile carries its share of the grid
+        assert all(tile.px[0]) and all(row[0] for row in tile.px), name
     t = open_tile(w, h)
     or_into(t, small_symbol(SMALL_FLAG) if w == 16 else flag(w, h))
     cross(t, w, h)
@@ -404,12 +346,12 @@ def make_tiles(sheet, style, w, h):
 
 
 def cursor_overlay(w, h):
-    """OR-ed over the tile (a closed tile is first swapped for the dark-faced
-    'selected' one). Beginner: thick corner brackets, as in Othello; the
-    smaller tiles: a frame around the whole cell, clear of the digits."""
+    """OR-ed over the tile, inside the grid lines. Beginner: thick corner
+    brackets, as in Othello; the smaller tiles: a frame around the cell,
+    clear of the digits and the squares."""
     t = Bitmap(w, h)
     if w == 40:
-        x0, y0, x1, y1 = 0, 0, w - 3, h - 1
+        x0, y0, x1, y1 = 1, 1, w - 1, h - 1
         lx, ly = 9, 5
         for (cx, sx) in ((x0, 1), (x1, -1)):
             for (cy, sy) in ((y0, 1), (y1, -1)):
@@ -420,17 +362,11 @@ def cursor_overlay(w, h):
                     for d in range(3):
                         t.set(cx + sx * d, cy + sy * i)
     else:
-        x1 = w - 2
-        t.rect(0, 0, x1, 0)
-        t.rect(0, h - 1, x1, h - 1)
-        t.rect(0, 0, 1, h - 1)
-        t.rect(x1 - 1, 0, x1, h - 1)
+        t.rect(1, 1, w - 1, 1)
+        t.rect(1, h - 1, w - 1, h - 1)
+        t.rect(1, 1, 2, h - 1)
+        t.rect(w - 2, 1, w - 1, h - 1)
     return t
-
-
-def row_span(bitmap):
-    ys = [y for y, row in enumerate(bitmap.px) if any(row)]
-    return ys[0], ys[-1]
 
 
 def column_label(sheet, w, n):
@@ -465,12 +401,6 @@ def c_bytes(data, indent="    ", per_line=20):
     return ",\n".join(indent + ", ".join(items[i:i + per_line]) for i in range(0, len(items), per_line))
 
 
-def encode(op):
-    """Bit 7: a column (else a row); bit 6: set (else erase); bits 0-5: offset."""
-    kind, value, k = op
-    return (0x80 if kind == "col" else 0) | (0x40 if value else 0) | k
-
-
 def generate(sheet):
     out = ["/* Generated by tools/gen_sprites.py -- do not edit. */",
            "#ifndef SPRITES_H", "#define SPRITES_H", "",
@@ -481,9 +411,6 @@ def generate(sheet):
     out.append(f"#define TILE_COUNT {len(TILES)}")
     out.append(f"#define STYLE_TILES {len(STYLE_TILES)}")
     out.append(f"#define STYLE_COUNT {len(STYLES)}")
-    out.append("/* closed-tile operations: bit 7 column (else row), bit 6 set (else erase), bits 0-5 offset */")
-    out.append("#define OP_COL 0x80")
-    out.append("#define OP_SET 0x40")
     out.append("")
     all_tiles = {}
     for k, (name, cols, rows, w, h) in enumerate(LEVELS):
@@ -504,10 +431,6 @@ def generate(sheet):
             out.append("  },")
         out.append("};")
         out.append(f"static const unsigned char cursor_{w}[{wb * h}] = {{\n{c_bytes(cur.to_bytes())} }};")
-        for st, sname in enumerate(STYLES):
-            ops = style_ops(st, w, h)
-            out.append(f"/* {sname}: {len(ops)} operations, sent in this order */")
-            out.append(f"static const unsigned char ops_{w}_{st}[{len(ops)}] = {{\n{c_bytes(bytes(encode(o) for o in ops))} }};")
         labels = b"".join(column_label(sheet, w, n).to_bytes() for n in range(1, cols + 1))
         out.append(f"/* column numbers 1-{cols}: {wb} bytes x 7 lines each */")
         out.append(f"static const unsigned char col_labels_{w}[{len(labels)}] = {{\n{c_bytes(labels)} }};")
@@ -518,13 +441,6 @@ def generate(sheet):
     out += ["", "#endif", ""]
     (ROOT / "src/sprites.h").write_text("\n".join(out))
     print("wrote src/sprites.h")
-    for name, cols, rows, w, h in LEVELS:
-        counts = []
-        for st in range(len(STYLES)):
-            ops = style_ops(st, w, h)
-            n = sum(rows if kind == "row" else cols for kind, _, _ in ops)
-            counts.append(f"{STYLES[st]} {n} lines ({n * 10} bytes)")
-        print(f"  {name}: fresh board " + ", ".join(counts))
     return all_tiles
 
 

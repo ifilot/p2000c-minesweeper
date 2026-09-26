@@ -9,8 +9,8 @@
 ; rules for those uploads were established on real hardware: the byte count
 ; must not have a zero low byte, and the terminal's picture RAM runs
 ; bottom-up (consecutive bytes of one upload continue on the line ABOVE), so
-; a multi-line upload would have to be sent from its lowest line upward;
-; this program only ever uploads single rows. All bytes go through BIOS
+; a multi-line upload is sent from its lowest line upward (screen.c sends
+; whole 64-byte lines that way, as chunks). All bytes go through BIOS
 ; CONOUT, because BDOS console output filters control characters and cannot
 ; send 0FFh.
 ;
@@ -34,10 +34,13 @@ PUBLIC _conin
 PUBLIC _conready
 PUBLIC _con_puts
 PUBLIC _con_at
+PUBLIC _con_write
 PUBLIC _video_copy
 PUBLIC _entropy
 PUBLIC _bdos
 PUBLIC _mem_xor
+PUBLIC _runs_cost
+PUBLIC _xor_cost
 
 defc FB_SIZE = 16128
 defc LINE    = 64
@@ -243,6 +246,119 @@ xor_loop:
         jr nz,xor_loop
         ret
 
+; unsigned int runs_cost(const unsigned char *buf, unsigned int width)
+; What uploading the nonzero bytes of buf[0..width) costs on the link, with
+; one 7-byte ESC r header per run and runs less than 7 zero bytes apart
+; joined (the zeros between are sent): screen.c's runs() in one pass.
+; width is 1..255.
+_runs_cost:
+        ld hl,2
+        add hl,sp
+        ld e,(hl)
+        inc hl
+        ld d,(hl)               ; DE = buf
+        inc hl
+        ld b,(hl)               ; B = width
+        ld hl,0                 ; HL = cost
+        ld c,0xFF               ; zeros since the last nonzero byte (7+: none worth joining)
+cost_loop:
+        ld a,(de)
+        or a
+        jr z,cost_zero
+        ld a,c
+        cp 7
+        jr nc,cost_new          ; no run to join: header and the byte
+        inc a                   ; join: the zeros between and the byte
+        jr cost_add
+cost_new:
+        ld a,8
+cost_add:
+        add a,l
+        ld l,a
+        jr nc,cost_added
+        inc h
+cost_added:
+        ld c,0
+        jr cost_next
+cost_zero:
+        ld a,c
+        cp 7
+        jr nc,cost_next         ; saturated (or no run yet)
+        inc c
+cost_next:
+        inc de
+        djnz cost_loop
+        ret
+
+; unsigned int xor_cost(unsigned char *dst, const unsigned char *a, const unsigned char *b, unsigned int n)
+; dst[i] = a[i] ^ b[i] for n (1..255) bytes, and returns runs_cost(dst, n).
+; Main registers walk the three buffers (HL = a, DE = b, BC = dst); the
+; alternate set keeps the count (B'), the zeros since the last nonzero byte
+; (C', 7 = none worth joining) and the cost (HL').
+_xor_cost:
+        ld hl,8
+        add hl,sp
+        ld a,(hl)               ; A = n (arguments: dst +2, a +4, b +6, n +8)
+        exx
+        ld b,a                  ; B' = n
+        exx
+        ld hl,2
+        add hl,sp
+        ld c,(hl)
+        inc hl
+        ld b,(hl)               ; BC = dst
+        inc hl
+        ld e,(hl)
+        inc hl
+        ld d,(hl)               ; DE = a (swapped below)
+        inc hl
+        ld a,(hl)
+        inc hl
+        ld h,(hl)
+        ld l,a                  ; HL = b
+        ex de,hl                ; HL = a, DE = b
+        exx
+        ld c,7                  ; C' = no run yet
+        ld hl,0                 ; HL' = cost
+xc_loop:
+        exx
+        ld a,(de)
+        xor (hl)
+        ld (bc),a
+        inc hl
+        inc de
+        inc bc
+        exx
+        or a
+        jr z,xc_zero
+        ld a,c
+        cp 7
+        ld a,8                  ; a new run: header and the byte
+        jr nc,xc_add
+        ld a,c
+        inc a                   ; joined: the zeros between and the byte
+xc_add:
+        add a,l
+        ld l,a
+        jr nc,xc_added
+        inc h
+xc_added:
+        ld c,0
+        djnz xc_loop
+        jr xc_done
+xc_zero:
+        ld a,c
+        cp 7
+        jr nc,xc_skip
+        inc c
+xc_skip:
+        djnz xc_loop
+xc_done:
+        push hl
+        exx
+        pop hl                  ; the cost
+        ret
+
 ; unsigned char entropy(void)   -- the refresh register, for seeding
 _entropy:
         ld a,r
@@ -371,6 +487,28 @@ puts_loop:
         inc hl
         jr puts_loop
 
+; void con_write(const unsigned char *p, unsigned int n)   -- n raw bytes
+_con_write:
+        ld hl,2
+        add hl,sp
+        ld e,(hl)
+        inc hl
+        ld d,(hl)               ; DE = p
+        inc hl
+        ld c,(hl)
+        inc hl
+        ld b,(hl)               ; BC = n
+        ex de,hl                ; HL = p
+write_loop:
+        ld a,b
+        or c
+        ret z
+        ld a,(hl)
+        call conout_a
+        inc hl
+        dec bc
+        jr write_loop
+
 ; void con_at(unsigned int row_col)   fastcall: L = row, H = column (zero based)
 _con_at:
         push hl
@@ -434,3 +572,4 @@ _framebuffer:
         defs FB_SIZE
 blit_width:
         defs 1
+

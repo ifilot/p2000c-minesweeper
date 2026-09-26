@@ -6,7 +6,7 @@
 
 #include "game.h"
 
-#define TILE_STYLES 2                       /* 0 vierkanten (concentric squares), 1 strepen */
+#define TILE_STYLES 3                       /* 0 raster (dither), 1 vierkanten (squares), 2 strepen */
 
 extern unsigned int best_time[LEVELS];      /* seconds; 0 = none yet */
 extern unsigned char tile_style;            /* closed-tile picture */

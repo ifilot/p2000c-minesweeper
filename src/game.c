@@ -4,6 +4,12 @@
  * After every change the board is brought up to date through the screen
  * module and the panel through the panel module; the status line is always
  * written last, so it doubles as a display-complete marker for the tests.
+ *
+ * A key is sometimes seen twice: the terminal board's Z80 both draws the
+ * picture and scans the keyboard, so a key held only briefly while it is
+ * busy can come through again as an auto-repeat. A key equal to the one
+ * before is therefore dropped when it arrived while that key's update was
+ * still being sent, or within REPEAT_TICKS after it.
  */
 #include "video.h"
 #include "field.h"
@@ -25,6 +31,9 @@ unsigned char state;
 unsigned char cur_r, cur_c;
 
 static unsigned char started;               /* the clock runs from the first open */
+static unsigned char last_key;              /* the key handled last */
+static unsigned int last_done;              /* clock ticks when its update was sent */
+static unsigned char queued;                /* a key was already waiting then */
 
 /* Cursor keys. The P2000C keyboard's cursor quadrant emits the WordStar
  * diamond (^S ^D ^E ^X, as P2EDIT and SuperCalc expect); the graphical
@@ -45,6 +54,7 @@ static unsigned char started;               /* the clock runs from the first ope
 #define KEY_ESC    0x1B
 #define BEL        0x07
 #define FAST_STEPS 5                        /* Shift+WASD */
+#define REPEAT_TICKS 9                      /* 0.15 s at 60 Hz */
 
 /* Idle hook while waiting for a key: keeps the clock display current. */
 static void tick_clock(void)
@@ -174,17 +184,23 @@ static void move_to(unsigned char r, unsigned char c)
     show_cursor_name();
 }
 
-/* Moves the cursor, stopping at the edge. */
-static void move_by(signed char dr, signed char dc, unsigned char steps)
+#define UP    0
+#define DOWN  1
+#define LEFT  2
+#define RIGHT 3
+
+/* Moves the cursor, stopping at the edge. (Unsigned arithmetic only: a
+ * signed-char version was miscompiled, moving up as if down.) */
+static void move_by(unsigned char dir, unsigned char steps)
 {
-    signed int r = cur_r, c = cur_c;
-    r += dr * steps;
-    c += dc * steps;
-    if (r < 0) r = 0;
-    if (r >= rows) r = rows - 1;
-    if (c < 0) c = 0;
-    if (c >= cols) c = cols - 1;
-    move_to((unsigned char)r, (unsigned char)c);
+    unsigned char r = cur_r, c = cur_c;
+    switch (dir) {
+    case UP:    r = r > steps ? r - steps : 0; break;
+    case DOWN:  r = r + steps < rows ? r + steps : rows - 1; break;
+    case LEFT:  c = c > steps ? c - steps : 0; break;
+    case RIGHT: c = c + steps < cols ? c + steps : cols - 1; break;
+    }
+    move_to(r, c);
 }
 
 /* TAB: the next closed cell without a flag, in reading order, wrapping. */
@@ -278,31 +294,53 @@ static unsigned char may_leave(void)
     return state != PLAYING || !laid || confirm("Opgeven? J/N");
 }
 
+/* Is this key an unintended repeat of the one just handled? */
+static unsigned char echo(unsigned char key)
+{
+    unsigned char was_queued = queued;
+    queued = 0;                             /* only the first key read after an update */
+    if (key != last_key)
+        return 0;
+    if (was_queued)
+        return 1;
+    return clock_available && (unsigned int)(clock_ticks() - last_done) < REPEAT_TICKS;
+}
+
 unsigned char play(unsigned char lvl)
 {
-    unsigned char key;
+    unsigned char key, handled = 0;
 
     level = lvl;
+    last_key = 0;
     panel_level();
     show_new_game();
 
     for (;;) {
+        if (handled) {                      /* the last key's update has been sent */
+            last_done = clock_ticks();
+            queued = conready();
+            handled = 0;
+        }
         key = wait_key_idle(redraw_game_screen, tick_clock);
         field_stir(((unsigned int)entropy() << 8) ^ clock_ticks());
+        if (echo(key))
+            continue;
+        last_key = key;
+        handled = 1;
         /* Shift+WASD: five cells at a time */
         switch (key) {
-        case 'W': move_by(-1, 0, FAST_STEPS); continue;
-        case 'A': move_by(0, -1, FAST_STEPS); continue;
-        case 'S': move_by(1, 0, FAST_STEPS);  continue;
-        case 'D': move_by(0, 1, FAST_STEPS);  continue;
+        case 'W': move_by(UP, FAST_STEPS);    continue;
+        case 'A': move_by(LEFT, FAST_STEPS);  continue;
+        case 'S': move_by(DOWN, FAST_STEPS);  continue;
+        case 'D': move_by(RIGHT, FAST_STEPS); continue;
         }
         if (key >= 'A' && key <= 'Z')
             key += 'a' - 'A';
         switch (key) {
-        case KEY_LEFT:  case KEY_LEFT2:  case 'a': move_by(0, -1, 1); break;
-        case KEY_RIGHT: case KEY_RIGHT2: case 'd': move_by(0, 1, 1);  break;
-        case KEY_UP:    case KEY_UP2:    case 'w': move_by(-1, 0, 1); break;
-        case KEY_DOWN:  case KEY_DOWN2:  case 's': move_by(1, 0, 1);  break;
+        case KEY_LEFT:  case KEY_LEFT2:  case 'a': move_by(LEFT, 1);  break;
+        case KEY_RIGHT: case KEY_RIGHT2: case 'd': move_by(RIGHT, 1); break;
+        case KEY_UP:    case KEY_UP2:    case 'w': move_by(UP, 1);    break;
+        case KEY_DOWN:  case KEY_DOWN2:  case 's': move_by(DOWN, 1);  break;
         case KEY_TAB:
             if (state == PLAYING)
                 next_closed();

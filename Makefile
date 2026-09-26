@@ -4,14 +4,14 @@
 # `make run` need the sibling p2000c-cpm-disk-tool checkout (headless emulator
 # and dist/pro/ disk images) and, for the character-ROM font, p2000c-emulator.
 
-VERSION    = 1.0.0
+VERSION    = 1.0.1
 BUILD_DATE = $(shell date +%Y-%m-%d)
 
 # -SO2, not -SO3: p2000c-battleship found the level-3 peephole rules
 # dropping stores and array loads in code like this.
 ZCC      = docker run --rm --user $(shell id -u):$(shell id -g) -v "$(CURDIR)":/src -w /src z88dk/z88dk zcc
-ZCCFLAGS = +cpm -vn -clib=sdcc_iy -O3 -SO2 --opt-code-speed --max-allocs-per-node200000 \
-           -Ibuild -create-app -m $(EXTRA)
+ZCCFLAGS = +cpm -vn -clib=sdcc_iy -O3 -SO2 --opt-code-speed --max-allocs-per-node10000 \
+           -Ibuild -create-app -m
 
 SOURCES = src/main.c src/game.c src/field.c src/screen.c src/panel.c src/screens.c src/scores.c src/saver.c src/clock.c src/video.asm
 HEADERS = src/video.h src/field.h src/game.h src/screen.h src/panel.h src/screens.h src/scores.h src/saver.h src/clock.h src/sprites.h src/version.h
@@ -24,9 +24,6 @@ DISKTOOL      = ../p2000c-cpm-disk-tool
 P2000C_DISK   = PYTHONPATH=$(DISKTOOL)/src python3 -m p2000c_disk.cli
 SYSTEM_TRACKS = $(DISKTOOL)/assets/boot/hdboot-split.trk
 DEPLOY_IMAGE  = build/HD1_256.hda
-
-# EXTRA=-DNO_ERASE: never use the terminal's erase-line command (ESC v); the
-# board is then uploaded whole (slower, ~5 s per fresh board).
 
 .PHONY: all build run screenshot test sprites deploy clean
 

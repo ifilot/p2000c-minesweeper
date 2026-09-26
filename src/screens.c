@@ -152,7 +152,7 @@ static void put_time(unsigned int s)
     conout('0' + s / 10); conout('0' + s % 10);
 }
 
-static const char *const STYLE_NAME[TILE_STYLES] = { " Tegels: vierkanten ", " Tegels: strepen " };
+static const char *const STYLE_NAME[TILE_STYLES] = { " Tegels: raster ", " Tegels: vierkanten ", " Tegels: strepen " };
 
 static const char *const LEVEL_LINE[LEVELS] = {
     "1   Beginner     9 x 9    10 mijnen",

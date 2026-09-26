@@ -2,8 +2,9 @@
 /* scores.c -- the best time per level and the tile style, kept in MINES.DAT.
  *
  * One 128-byte CP/M record on the current drive: the magic "MS", a format
- * byte, a little-endian word of seconds per level, then the tile style
- * (a file without one reads as style 0). Plain BDOS
+ * byte, a little-endian word of seconds per level, then the tile style.
+ * Format 1 (version 1.0.0) numbered the styles differently, so its style
+ * is ignored and its best times kept. Plain BDOS
  * sequential file calls; a file that is missing or does not start with the
  * magic means no records yet.
  */
@@ -18,6 +19,7 @@
 #define F_DMA    26
 #define FAILED   0xFF
 #define STYLE_AT (3 + 2 * LEVELS)
+#define FORMAT   2
 
 unsigned int best_time[LEVELS];
 unsigned char tile_style;
@@ -45,10 +47,11 @@ void scores_load(void)
     fcb_init();
     if (bdos((unsigned int)fcb, F_OPEN) == FAILED)
         return;
-    if (bdos((unsigned int)fcb, F_READ) == 0 && record[0] == 'M' && record[1] == 'S' && record[2] == 1) {
+    if (bdos((unsigned int)fcb, F_READ) == 0 && record[0] == 'M' && record[1] == 'S'
+        && (record[2] == 1 || record[2] == FORMAT)) {
         for (i = 0; i < LEVELS; i++)
             best_time[i] = record[3 + 2 * i] | (record[4 + 2 * i] << 8);
-        if (record[STYLE_AT] < TILE_STYLES)
+        if (record[2] == FORMAT && record[STYLE_AT] < TILE_STYLES)
             tile_style = record[STYLE_AT];
     }
     bdos((unsigned int)fcb, F_CLOSE);
@@ -61,7 +64,7 @@ void scores_save(void)
         record[i] = 0x1A;                   /* CP/M end-of-file filler */
     record[0] = 'M';
     record[1] = 'S';
-    record[2] = 1;
+    record[2] = FORMAT;
     for (i = 0; i < LEVELS; i++) {
         record[3 + 2 * i] = best_time[i] & 0xFF;
         record[4 + 2 * i] = best_time[i] >> 8;

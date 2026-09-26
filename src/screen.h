@@ -12,14 +12,11 @@ extern void screen_level(unsigned char level);
 /* Composes the whole picture (frame, labels, every cell) in RAM. */
 extern void screen_compose(void);
 
-/* Sends the composed picture after ESC 3: the closed buttons and the frame
- * as vectors, everything else as row uploads of what the vectors lack. */
+/* Sends the composed picture after ESC 3: the grid and the frame as lines,
+ * everything else as uploads of what the lines lack. */
 extern void screen_flush(void);
 
 /* Redraws the cells whose appearance changed and sends the bytes that differ. */
 extern void screen_sync(void);
-
-/* Sends the lit runs of every framebuffer line (the NO_ERASE fallback). */
-extern void flush_sparse(void);
 
 #endif

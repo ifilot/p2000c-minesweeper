@@ -96,22 +96,24 @@ def run(actions: list[str], dump_cells: bool = False,
 
 # --- playing ---------------------------------------------------------------------
 
-STYLE_NAMES = ["vierkanten", "strepen"]
+STYLE_NAMES = ["raster", "vierkanten", "strepen"]
 
 
 def start(level: int, style: int = 0) -> list[str]:
     """From the start screen into a fresh game (level 0..2), after switching
-    to another tile style with T if asked (the default is 0, vierkanten)."""
+    to another tile style with T if asked (the default is 0, raster)."""
     actions = ["--wait-for", "terug naar CP/M"]
-    for _ in range(style):
-        actions += ["--send", "t", "--wait-for", f"Tegels: {STYLE_NAMES[style]}", "--wait-for", "terug naar CP/M"]
+    for k in range(1, style + 1):
+        actions += ["--send", "t", "--wait-for", f"Tegels: {STYLE_NAMES[k]}", "--wait-for", "terug naar CP/M"]
     return actions + ["--send", str(level + 1), "--wait-for", PLAYING]
 
 
 def act(keys: str, until: str = PLAYING) -> list[str]:
     """A board action: wait until it has been processed (the status line
-    reads 'Bezig...' while the board is updated, then the result)."""
-    return ["--send", keys, "--wait-for", "Bezig", "--wait-for", until]
+    reads 'Bezig...' while the board is updated, then the result). A pause
+    comes first, as the game drops a key that repeats the previous one
+    within 0.15 s of its update."""
+    return ["--run", "1000000", "--send", keys, "--wait-for", "Bezig", "--wait-for", until]
 
 
 def go(level: int, r: int, c: int) -> str:
@@ -255,7 +257,8 @@ def defaults() -> list[tuple[str, list[str]]]:
         ("expert.png", midgame(2, 8, 1, 3)),
         ("lost.png", lost(0)),
         ("won.png", won(1)),
-        ("strepen.png", midgame(1, 5, 1, 2, style=1)),
+        ("vierkanten.png", midgame(1, 5, 1, 2, style=1)),
+        ("strepen.png", midgame(1, 5, 1, 2, style=2)),
     ]
 
 
