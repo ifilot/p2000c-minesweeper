@@ -13,6 +13,13 @@ carries the panel. The user interface is in Dutch. The three classic
 levels are offered at the start, each with the largest square cells that
 fit the screen.
 
+> [!NOTE]
+> **More P2000C games:** Check out [Chess](https://github.com/ifilot/p2000c-chess),
+> [Battleship](https://github.com/ifilot/p2000c-battleship),
+> [Othello](https://github.com/ifilot/p2000c-othello), and
+> [Tetris](https://github.com/ifilot/p2000c-tetris). For an all-in-one setup
+> containing all five games, see the [P2000C ZuluBlaster SASI drive distribution](https://github.com/ifilot/p2000c-zulublaster-sasi-drive).
+
 <p align="center">
   <img src="docs/start.png" alt="Start screen" width="48%">
   <img src="docs/beginner.png" alt="Beginner, 9x9" width="48%">
